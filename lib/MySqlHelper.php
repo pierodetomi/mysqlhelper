@@ -1,5 +1,8 @@
 <?php
 
+	require("SqlWhere.php");
+	require("ParameterType.php");
+
 	class MySqlHelper {
 		private $db;
 		
@@ -30,7 +33,7 @@
 			$this->db->close();
 		}
 		
-		public function execSpWithResults($resultItemTypeName, $spName, array $spParams = NULL) {
+		public function loadDataFromStoredProcedure($resultItemTypeName, $spName, array $spParams = NULL) {
 			$sql = "CALL ".$spName."(";
 			$parameterTypes = "";
 			
@@ -57,14 +60,53 @@
 			
 			$statement->execute();
 			
+			return $this->bindResultsAndCreateResultItems($statement, $resultItemTypeName);
+		}
+		
+		public function loadDataFromTableOrView($resultItemTypeName, $tableName, SqlWhere $where = NULL) {
+			$sql = "SELECT ";
+			
 			$properties = get_class_vars($resultItemTypeName);
+			$propertyIndex = 0;
+			
+			foreach($properties as $propertyName => $propertyValue) {
+				$sql .= ($propertyIndex == 0 ? $propertyName : ", ".$propertyName);
+				$propertyIndex++;
+			}
+			
+			$sql .= " FROM ".$tableName;
+			
+			if($where == NULL) $sql .= ";";
+			else $sql .= " WHERE ".$where->getSql().";";
+			
+			$statement = $this->db->prepare($sql);
+			
+			if($where != NULL) {
+				$values = $where->getBindParamArray();
+				$arr = array();
+				
+				for($i = 0; $i < count($values); $i++) {
+					if($i == 0) $arr[$i] = $values[$i];
+					else $arr[$i] = &$values[$i];
+				}
+				
+				call_user_func_array(array($statement, "bind_param"), $arr);
+			}
+			
+			$statement->execute();
+			
+			return $this->bindResultsAndCreateResultItems($statement, $resultItemTypeName);
+		}
+		
+		private function bindResultsAndCreateResultItems($statement, $resultItemTypeName) {
+			$properties = get_class_vars($resultItemTypeName);
+			
 			$results = array();
+			$propertyIndex = 0;
 			
-			$paramIndex = 0;
-			
-			foreach($properties as $name=>$value) {
-				$results[$paramIndex] = &$$name;
-				$paramIndex++;
+			foreach($properties as $propertyName => $propertyValue) {
+				$results[$propertyIndex] = &$$propertyName;
+				$propertyIndex++;
 			}
 			
 			call_user_func_array(
@@ -99,7 +141,7 @@
 			$parametersString = "";
 			
 			foreach($parametersArray as $parameterValue) {
-				$parameterTypes .= $this->decodeParameterTypeByValue($parameterValue);
+				$parameterTypes .= $this::decodeParameterTypeByValue($parameterValue);
 				$parametersString .= ($parameterIndex == 0 ? "?" : ", ?");
 				
 				$parameterIndex++;
@@ -108,13 +150,13 @@
 			return $parametersString;
 		}
 		
-		private function decodeParameterTypeByValue($parameterValue) {
+		public static function decodeParameterTypeByValue($parameterValue) {
 			$parameterType = gettype($parameterValue);
 			
 			switch($parameterType) {
-				case integer: return "i";
-				case string: return "s";
-				default: return "s";
+				case integer: return ParameterType::INTEGER;
+				case string: return ParameterType::STRING;
+				default: return ParameterType::STRING;
 			}
 		}
 		
